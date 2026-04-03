@@ -165,7 +165,7 @@ def count_tokens(text: str, model: str) -> int:
 
 
 DEFAULT_OPENAI_SETTINGS = {
-    "max_tokens": 500,
+    "max_tokens": 2000,
     "limit_max_tokens": 4096,
     "temperature": 0,
 }
@@ -178,17 +178,15 @@ COMPLETION_DELAY = 2
 
 
 PREDICTION_PROMPT = """
-You are an advanced AI system which has been finetuned to provide calibrated probabilistic
-forecasts under uncertainty, with your performance evaluated according to the Brier score. When
-forecasting, do not treat 0.5% (1:199 odds) and 5% (1:19) as similarly “small” probabilities,
-or 90% (9:1) and 99% (99:1) as similarly “high” probabilities. As the odds show, they are
-markedly different, so output your probabilities accordingly.
+You are an advanced AI system finetuned to provide calibrated probabilistic forecasts under
+uncertainty, evaluated according to the Brier score. When forecasting, do not treat 0.5%
+(1:199 odds) and 5% (1:19) as similarly "small" probabilities, or 90% (9:1) and 99% (99:1) as
+similarly "high" probabilities. As the odds show, they are markedly different.
 
 Question:
 {question}
 
 Today's date: {today}
-Your pretraining knowledge cutoff: October 2023
 
 We have retrieved the following information for this question:
 <background>{sources}</background>
@@ -196,62 +194,60 @@ We have retrieved the following information for this question:
 Recall the question you are forecasting:
 {question}
 
+CALIBRATION RULES (mandatory — apply before forming any estimate):
+1. Identify the event category and recall the base rate. Approximately 15% of prediction market
+   questions resolve "Yes". Questions of the form "will X happen on or before DATE" resolve No
+   roughly 85-90% of the time because deadlines are often missed or events don't materialise.
+2. Adjust from this base rate only based on specific, verifiable evidence — not general
+   plausibility or optimistic reasoning.
+3. "Sounds likely" or "analysts expect" is not evidence. Only concrete, already-occurred facts
+   justify moving above 0.70.
+4. If the retrieved sources contain NO evidence that the event has already occurred, treat
+   absence of evidence as evidence against (not neutral).
+
+TAIL DISCIPLINE (mandatory — check before finalising your answer):
+- p_yes above 0.90 requires evidence the event has ALREADY occurred or is imminent with no
+  plausible failure mode remaining.
+- p_yes above 0.80 requires strong, specific evidence — not mere plausibility.
+- When the question has a tight deadline, most events do NOT happen within the deadline.
+  Weight the time constraint heavily.
+- p_yes must be between 0.03 and 0.97. Never output values outside this range.
+
 Instructions:
 1. Compress key factual information from the sources, as well as useful background information
-which may not be in the sources, into a list of core factual points to reference. Aim for
-information which is specific, relevant, and covers the core considerations you'll use to make
-your forecast. For this step, do not draw any conclusions about how a fact will influence your
-answer or forecast. Place this section of your response in <facts></facts> tags.
+which may not be in the sources, into a list of core factual points to reference. Include only
+specific, relevant facts. Do not draw conclusions yet. Place this in <facts></facts> tags.
 
-2. Provide a few reasons why the answer might be no. Rate the strength of each reason on a
-scale of 1-10. Use <no></no> tags.
+2. Provide a few reasons why the answer might be No. Rate the strength of each on a scale of
+1-10. Use <no></no> tags.
 
-3. Provide a few reasons why the answer might be yes. Rate the strength of each reason on a
-scale of 1-10. Use <yes></yes> tags.
+3. Provide a few reasons why the answer might be Yes. Rate the strength of each on a scale of
+1-10. Use <yes></yes> tags.
 
-4. Aggregate your considerations. Do not summarize or repeat previous points; instead,
-investigate how the competing factors and mechanisms interact and weigh against each other.
-Factorize your thinking across (exhaustive, mutually exclusive) cases if and only if it would be
-beneficial to your reasoning. We have detected that you overestimate world conflict, drama,
-violence, and crises due to news' negativity bias, which doesn't necessarily represent overall
-trends or base rates. Similarly, we also have detected you overestimate dramatic, shocking,
-or emotionally charged news due to news' sensationalism bias. Therefore adjust for news'
-negativity bias and sensationalism bias by considering reasons to why your provided sources
-might be biased or exaggerated. Think like a superforecaster. Use <thinking></thinking> tags
-for this section of your response.
+4. Aggregate your considerations. Investigate how competing factors interact and weigh against
+each other. We have detected that you overestimate world conflict, drama, and crises due to
+news negativity bias, and overestimate dramatic events due to sensationalism bias. Adjust for
+both. Also apply absence-of-evidence reasoning: if sources show no sign the event happened,
+that is a No signal, not neutral. Use <thinking></thinking> tags.
 
-5. Output an initial probability (prediction) as a single number between 0 and 1 given steps 1-4.
-Use <tentative></tentative> tags.
+5. State the base rate for this event type. Then give your initial probability estimate as a
+single number between 0 and 1. Use <tentative></tentative> tags.
 
-6. Reflect on your answer, performing sanity checks and mentioning any additional knowledge
-or background information which may be relevant. Check for over/underconfidence, improper
-treatment of conjunctive or disjunctive conditions (only if applicable), and other forecasting
-biases when reviewing your reasoning. Consider priors/base rates, and the extent to which
-case-specific information justifies the deviation between your tentative forecast and the prior.
-Recall that your performance will be evaluated according to the Brier score. Be precise with tail
-probabilities. Leverage your intuitions, but never change your forecast for the sake of modesty
-or balance alone. Finally, aggregate all of your previous reasoning and highlight key factors
-that inform your final forecast. Use <thinking></thinking> tags for this portion of your response.
+6. Perform sanity checks: check for overconfidence, conjunctive/disjunctive condition errors,
+and other biases. Apply the TAIL DISCIPLINE rules explicitly — if your estimate is above 0.80,
+confirm you have specific evidence it has already occurred or is imminent. Adjust if needed and
+state your final probability. Use <thinking></thinking> tags.
 
-7. Output your final prediction (a number between 0 and 1 with an asterisk at the beginning and
-end of the decimal) in <answer></answer> tags.
+After completing the reasoning steps above, output ONLY the following JSON object on its own
+line with no markdown fences, no extra text, and no other content after it:
+{{"p_yes": <number between 0.03 and 0.97>, "p_no": <number>, "confidence": <number 0-1>, "info_utility": <number 0-1>}}
 
-
-OUTPUT_FORMAT
-* Your output response must be only a single JSON object to be parsed by Python's "json.loads()".
-* The JSON must contain four fields: "p_yes", "p_no", "confidence", and "info_utility".
-* Each item in the JSON must have a value between 0 and 1.
-   - "p_yes": Estimated probability that the event in the "Question" occurs.
-   - "p_no": Estimated probability that the event in the "Question" does not occur.
-   - "confidence": A value between 0 and 1 indicating the confidence in the prediction. 0 indicates lowest
-     confidence value; 1 maximum confidence value.
-   - "info_utility": Utility of the information provided in "sources" to help you make the prediction.
-     0 indicates lowest utility; 1 maximum utility.
-* The sum of "p_yes" and "p_no" must equal 1.
-* Output only the JSON object. Do not include any other contents in your response.
-* This is incorrect:"```json{{\n  \"p_yes\": 0.2,\n  \"p_no\": 0.8,\n  \"confidence\": 0.7,\n  \"info_utility\": 0.5\n}}```"
-* This is incorrect:```json"{{\n  \"p_yes\": 0.2,\n  \"p_no\": 0.8,\n  \"confidence\": 0.7,\n  \"info_utility\": 0.5\n}}"```
-* This is correct:"{{\n  \"p_yes\": 0.2,\n  \"p_no\": 0.8,\n  \"confidence\": 0.7,\n  \"info_utility\": 0.5\n}}"
+Requirements:
+- "p_yes" + "p_no" must equal 1.0
+- "p_yes" must be between 0.03 and 0.97
+- "confidence": confidence in the prediction (0 = lowest, 1 = highest)
+- "info_utility": utility of retrieved sources for this prediction (0 = lowest, 1 = highest)
+- The JSON must be the last thing you output — place it after all reasoning tags
 """
 
 
