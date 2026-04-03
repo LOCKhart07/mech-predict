@@ -165,7 +165,7 @@ def count_tokens(text: str, model: str) -> int:
 
 
 DEFAULT_OPENAI_SETTINGS = {
-    "max_tokens": 500,
+    "max_tokens": 3000,
     "limit_max_tokens": 4096,
     "temperature": 0,
 }
@@ -178,10 +178,20 @@ COMPLETION_DELAY = 2
 
 
 PREDICTION_PROMPT = """
-You are an advanced AI system which has been finetuned to provide calibrated probabilistic
-forecasts under uncertainty, with your performance evaluated according to the Brier score. When
-forecasting, do not treat 0.5% (1:199 odds) and 5% (1:19) as similarly “small” probabilities,
-or 90% (9:1) and 99% (99:1) as similarly “high” probabilities. As the odds show, they are
+You are an expert superforecaster with a track record of well-calibrated probabilistic predictions,
+evaluated according to the Brier score. You are especially careful to avoid overconfidence: you
+know that most specific future events have base rates well below 50%, and that probabilities above
+0.85 should only be assigned when evidence is overwhelming and near-certain.
+
+CRITICAL CALIBRATION WARNING: Analysis of past predictions from this system reveals severe
+overconfidence -- predictions in the 0.85-1.0 range were correct only about 15-20% of the time.
+Before assigning any probability above 0.7, ask yourself: "Have I encountered truly decisive,
+specific evidence? Or am I anchoring too heavily on one favorable signal?" Reserve probabilities
+above 0.85 only for near-certainties. When uncertain, lean toward base rates (typically 0.2-0.5
+for most real-world questions).
+
+When forecasting, do not treat 0.5% (1:199 odds) and 5% (1:19) as similarly "small" probabilities,
+or 90% (9:1) and 99% (99:1) as similarly "high" probabilities. As the odds show, they are
 markedly different, so output your probabilities accordingly.
 
 Question:
@@ -196,62 +206,54 @@ We have retrieved the following information for this question:
 Recall the question you are forecasting:
 {question}
 
-Instructions:
+Follow these steps carefully, working through each one before outputting JSON:
+
 1. Compress key factual information from the sources, as well as useful background information
 which may not be in the sources, into a list of core factual points to reference. Aim for
 information which is specific, relevant, and covers the core considerations you'll use to make
 your forecast. For this step, do not draw any conclusions about how a fact will influence your
 answer or forecast. Place this section of your response in <facts></facts> tags.
 
-2. Provide a few reasons why the answer might be no. Rate the strength of each reason on a
-scale of 1-10. Use <no></no> tags.
+2. Provide a few reasons why the answer might be NO. Rate the strength of each reason on a
+scale of 1-10. Consider: obstacles, historical precedents of similar events not happening, timing
+constraints, and base rates for this type of event. Use <no></no> tags.
 
-3. Provide a few reasons why the answer might be yes. Rate the strength of each reason on a
+3. Provide a few reasons why the answer might be YES. Rate the strength of each reason on a
 scale of 1-10. Use <yes></yes> tags.
 
-4. Aggregate your considerations. Do not summarize or repeat previous points; instead,
-investigate how the competing factors and mechanisms interact and weigh against each other.
-Factorize your thinking across (exhaustive, mutually exclusive) cases if and only if it would be
-beneficial to your reasoning. We have detected that you overestimate world conflict, drama,
-violence, and crises due to news' negativity bias, which doesn't necessarily represent overall
-trends or base rates. Similarly, we also have detected you overestimate dramatic, shocking,
-or emotionally charged news due to news' sensationalism bias. Therefore adjust for news'
-negativity bias and sensationalism bias by considering reasons to why your provided sources
-might be biased or exaggerated. Think like a superforecaster. Use <thinking></thinking> tags
-for this section of your response.
+4. Aggregate your considerations. Investigate how the competing factors interact and weigh
+against each other. We have detected that LLMs overestimate world conflict, drama, violence,
+and crises due to news' negativity bias, which doesn't represent overall trends or base rates.
+Similarly, LLMs overestimate dramatic or emotionally charged outcomes due to sensationalism
+bias. Adjust for these biases: consider why your sources might be biased or exaggerated, and
+what the true base rate for this type of event is. Think like a superforecaster -- start from the
+outside view (base rate), then update only as far as specific evidence warrants.
+Use <thinking></thinking> tags.
 
-5. Output an initial probability (prediction) as a single number between 0 and 1 given steps 1-4.
+5. Output an initial probability as a single number between 0 and 1.
 Use <tentative></tentative> tags.
 
-6. Reflect on your answer, performing sanity checks and mentioning any additional knowledge
-or background information which may be relevant. Check for over/underconfidence, improper
-treatment of conjunctive or disjunctive conditions (only if applicable), and other forecasting
-biases when reviewing your reasoning. Consider priors/base rates, and the extent to which
-case-specific information justifies the deviation between your tentative forecast and the prior.
-Recall that your performance will be evaluated according to the Brier score. Be precise with tail
-probabilities. Leverage your intuitions, but never change your forecast for the sake of modesty
-or balance alone. Finally, aggregate all of your previous reasoning and highlight key factors
-that inform your final forecast. Use <thinking></thinking> tags for this portion of your response.
+6. Perform a calibration sanity check:
+   - What is the realistic base rate for questions like this?
+   - Is your tentative probability above 0.7? If so, ask: "Do I have truly decisive evidence,
+     or am I overconfident?" Most real-world binary questions resolve YES less than 50% of the time.
+   - Is your tentative probability below 0.3? Ask: "Am I being overconfident in the negative direction?"
+   - Check for improper treatment of conjunctive/disjunctive conditions.
+   - Adjust your forecast if needed, but never change it for the sake of modesty alone.
+   Use <thinking></thinking> tags.
 
-7. Output your final prediction (a number between 0 and 1 with an asterisk at the beginning and
-end of the decimal) in <answer></answer> tags.
+7. Based on all your reasoning above, produce the final JSON output. The JSON must contain
+exactly four fields: "p_yes", "p_no", "confidence", and "info_utility".
 
-
-OUTPUT_FORMAT
-* Your output response must be only a single JSON object to be parsed by Python's "json.loads()".
-* The JSON must contain four fields: "p_yes", "p_no", "confidence", and "info_utility".
-* Each item in the JSON must have a value between 0 and 1.
-   - "p_yes": Estimated probability that the event in the "Question" occurs.
-   - "p_no": Estimated probability that the event in the "Question" does not occur.
-   - "confidence": A value between 0 and 1 indicating the confidence in the prediction. 0 indicates lowest
-     confidence value; 1 maximum confidence value.
-   - "info_utility": Utility of the information provided in "sources" to help you make the prediction.
-     0 indicates lowest utility; 1 maximum utility.
-* The sum of "p_yes" and "p_no" must equal 1.
-* Output only the JSON object. Do not include any other contents in your response.
-* This is incorrect:"```json{{\n  \"p_yes\": 0.2,\n  \"p_no\": 0.8,\n  \"confidence\": 0.7,\n  \"info_utility\": 0.5\n}}```"
-* This is incorrect:```json"{{\n  \"p_yes\": 0.2,\n  \"p_no\": 0.8,\n  \"confidence\": 0.7,\n  \"info_utility\": 0.5\n}}"```
-* This is correct:"{{\n  \"p_yes\": 0.2,\n  \"p_no\": 0.8,\n  \"confidence\": 0.7,\n  \"info_utility\": 0.5\n}}"
+STRICT OUTPUT FORMAT RULES:
+* Output ONLY a single valid JSON object -- no text before or after, no markdown code fences.
+* "p_yes": Estimated probability that the event in the "Question" occurs (0 to 1).
+* "p_no": Estimated probability that the event does NOT occur (0 to 1). Must equal 1 - p_yes.
+* "confidence": Your confidence in the prediction (0 = lowest, 1 = highest).
+* "info_utility": How useful were the retrieved sources for making this prediction (0 = not useful, 1 = very useful).
+* The sum of "p_yes" and "p_no" must equal exactly 1.
+* Correct format: {{"p_yes": 0.2, "p_no": 0.8, "confidence": 0.7, "info_utility": 0.5}}
+* Incorrect (has code fences): ```json{{"p_yes": 0.2, ...}}```
 """
 
 
@@ -436,7 +438,14 @@ def run(**kwargs: Any) -> Union[MaxCostResponse, MechResponse]:
         )
         print(f"\n{prediction_prompt=}\n")
         messages = [
-            {"role": "system", "content": "You are a helpful assistant."},
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert superforecaster trained to produce well-calibrated "
+                    "probabilistic predictions evaluated by Brier score. You think carefully "
+                    "about base rates, avoid overconfidence, and output valid JSON."
+                ),
+            },
             {"role": "user", "content": prediction_prompt},
         ]
         print("Getting prompt response...")
