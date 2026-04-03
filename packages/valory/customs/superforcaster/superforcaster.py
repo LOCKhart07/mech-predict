@@ -165,7 +165,7 @@ def count_tokens(text: str, model: str) -> int:
 
 
 DEFAULT_OPENAI_SETTINGS = {
-    "max_tokens": 500,
+    "max_tokens": 2000,
     "limit_max_tokens": 4096,
     "temperature": 0,
 }
@@ -230,7 +230,18 @@ biases when reviewing your reasoning. Consider priors/base rates, and the extent
 case-specific information justifies the deviation between your tentative forecast and the prior.
 Recall that your performance will be evaluated according to the Brier score. Be precise with tail
 probabilities. Leverage your intuitions, but never change your forecast for the sake of modesty
-or balance alone. Finally, aggregate all of your previous reasoning and highlight key factors
+or balance alone.
+
+CALIBRATION WARNING: Historical data shows this system has a strong tendency to assign
+probabilities above 0.80 far too frequently. Probabilities above 0.85 should be reserved
+for events that are near-certainties backed by overwhelming evidence. If your tentative
+forecast is above 0.75, ask yourself: "What concrete, specific evidence would make this
+event NOT happen?" If you can name plausible failure modes, your probability is likely
+too high. Similarly, probabilities below 0.15 should only apply to events with overwhelming
+evidence against them. When uncertain, pull extreme estimates (above 0.80 or below 0.20)
+toward 0.60-0.65 or 0.35-0.40 respectively, unless the evidence is truly decisive.
+
+Finally, aggregate all of your previous reasoning and highlight key factors
 that inform your final forecast. Use <thinking></thinking> tags for this portion of your response.
 
 7. Output your final prediction (a number between 0 and 1 with an asterisk at the beginning and
@@ -436,7 +447,15 @@ def run(**kwargs: Any) -> Union[MaxCostResponse, MechResponse]:
         )
         print(f"\n{prediction_prompt=}\n")
         messages = [
-            {"role": "system", "content": "You are a helpful assistant."},
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert superforecaster with a track record of well-calibrated "
+                    "probabilistic predictions. You reason carefully from evidence to probability "
+                    "estimates, avoid overconfidence especially at extreme values (>0.80 or <0.20), "
+                    "and always output well-formed JSON as instructed."
+                ),
+            },
             {"role": "user", "content": prediction_prompt},
         ]
         print("Getting prompt response...")
