@@ -323,30 +323,59 @@ TOKENS_DISTANCE_TO_LIMIT = 200
 
 
 PREDICTION_PROMPT = """
-You will be evaluating the likelihood of an event based on a user's question and additional information from search results.
-The user's question is: <user_prompt> {USER_PROMPT} </user_prompt>
+You are an expert superforecaster evaluating the probability of a binary event based on a question and retrieved web evidence.
 
-The additional background information that may be relevant to the question is:
+The question is: <user_prompt> {USER_PROMPT} </user_prompt>
+
+Retrieved evidence from web searches:
 <additional_information> {ADDITIONAL_INFORMATION} </additional_information>
 
-Carefully consider the user's question and the additional information provided. Then, think through the following:
-- The probability that the event specified in the user's question will happen (p_yes)
-- The probability that the event will not happen (p_no)
-- Your confidence level in your prediction
-- How useful was the additional information in allowing you to make a prediction (info_utility)
+Work through these steps carefully before giving your final answer:
 
-Provide your final scores in the following format: <p_yes>probability between 0 and 1</p_yes> <p_no>probability between 0 and 1</p_no>
-your confidence level between 0 and 1 <info_utility>utility of the additional information between 0 and 1</info_utility>
+STEP 1 — IDENTIFY RESOLUTION CRITERIA
+What specific event must occur, by what deadline, for this to resolve YES?
 
-Remember, p_yes and p_no should add up to 1.
+STEP 2 — BASE RATE ANCHOR
+Before considering specific evidence, state a base-rate probability.
+- Approximately 15% of prediction market questions resolve "Yes" — this is your starting point unless you have strong evidence otherwise.
+- For "Will X happen on or before [specific date]?" questions, the default is NO: most events with deadlines do not happen within those deadlines.
+- State your initial base-rate estimate explicitly before adjusting.
 
-Your response should be structured as follows:
-<p_yes></p_yes>
-<p_no></p_no>
-<info_utility></info_utility>
-<confidence></confidence>
-<analysis></analysis>
+STEP 3 — EVIDENCE REVIEW
+Evaluate the retrieved information critically:
+- Does any source confirm the event has ALREADY occurred? (This is the strongest YES signal.)
+- Is there specific, verifiable evidence pointing YES or NO?
+- If searches returned nothing relevant, treat this as a NO signal — not neutral.
+- "Analysts predict" or "likely to happen" language means the event has NOT yet occurred; do not treat it as strong YES evidence.
+- Absence of news that an event occurred IS evidence it has not occurred.
+
+STEP 4 — CALIBRATED ADJUSTMENT
+Adjust from your base rate proportionally to evidence strength:
+- Event already confirmed as occurred → move toward 0.88–0.95
+- Strong specific evidence (near-certain outcome, concrete announcements) → 0.70–0.85
+- Moderate evidence (plausible but uncertain) → 0.30–0.60
+- Weak or no relevant evidence found → remain at or below base rate (0.05–0.20)
+
+CALIBRATION RULES (mandatory):
+1. p_yes MUST be between 0.03 and 0.97. Never output 0.0 or 1.0.
+2. p_yes above 0.90 requires evidence the event has ALREADY occurred or is imminent with no plausible failure mode remaining.
+3. p_yes above 0.80 requires strong, specific evidence — not just "this seems likely."
+4. p_yes below 0.10 requires strong evidence the event cannot or has not occurred.
+5. When the question has a tight deadline ("on or before [date]"), most events do NOT happen within the deadline. Weight the time constraint heavily.
+6. "Sounds plausible" or "analysts suggest" is NOT sufficient to push above 0.70.
+
+Provide your final scores in this exact format:
+
+<p_yes>probability between 0.03 and 0.97</p_yes>
+<p_no>probability between 0.03 and 0.97</p_no>
+<info_utility>utility of the additional information between 0 and 1</info_utility>
+<confidence>your confidence level between 0 and 1</confidence>
+<analysis>Your reasoning: base rate used, key evidence reviewed, and why you adjusted (or did not adjust) from the base rate</analysis>
+
+Remember: p_yes and p_no must add up to 1.
 """
+
+PREDICTION_SYSTEM_PROMPT = "You are an expert superforecaster specializing in binary prediction markets. Your primary goal is calibrated probability estimation — neither overconfident nor underconfident. You are known for being accurate by anchoring on base rates and adjusting only when specific evidence warrants it."
 
 URL_QUERY_PROMPT = """
 Here is the user prompt: {USER_PROMPT}
@@ -1064,7 +1093,7 @@ def run(
 
         # Generate the prediction
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": PREDICTION_SYSTEM_PROMPT},
             {"role": "user", "content": prediction_prompt},
         ]
 
